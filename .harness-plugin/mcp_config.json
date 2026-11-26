@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "capcut-mcp": {
+      "description": "MCP Server dieu khien timeline, cat ghep video, chen text/audio va validate du an CapCut tu dong",
+      "enabled": true
+    },
+    "powerpoint-mcp": {
+      "description": "MCP Server khoi tao va trinh bay slide bao cao, bang bieu, bieu do chuyen nghiep tuong thich WPS Office / MS Office",
+      "enabled": true
+    }
+  }
+}

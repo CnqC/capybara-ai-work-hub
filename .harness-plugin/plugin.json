@@ -1,0 +1,12 @@
+{
+  "name": "capybara-work-harness",
+  "version": "1.0.0",
+  "author": {
+    "name": "Cao Nhat Quang",
+    "url": "https://github.com/CnqC"
+  },
+  "homepage": "https://github.com/CnqC/capybara-ai-work-hub",
+  "repository": "https://github.com/CnqC/capybara-ai-work-hub",
+  "category": "productivity",
+  "description": "CapyHub — He sinh thai AI Work Harness ca nhan hoa chu de Capybara: Giao tiep Mic Push-to-Talk -> Vong lap Confirm Hinh Dung Ket Qua Cuoi -> Chia nho Task & File Ban Giao HANDOFF.md -> Subagent QA Lien Tuc (Maker != Checker) -> Tri nho dai han USER-STYLE-DNA cho WPS Office, Phan tich So lieu, Edit Video CapCut va Code App Quan ly Tai chinh ca nhan."
+}

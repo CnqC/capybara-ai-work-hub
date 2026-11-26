@@ -1,0 +1,17 @@
+version: 1
+denylist:
+  - "**/.env"
+  - "**/.env.*"
+  - "**/secrets/**"
+  - "**/*.jks"
+  - "**/*.keystore"
+maxFiles: 15
+architectureLimits:
+  maxLinesPerSourceFile: 250
+  forbidExplicitAny: true
+  requireSupabaseRLS: true
+autoMergeAllowlist:
+  - "docs/**"
+  - "specs/**"
+  - "**/*.md"
+  - "tests/**/*.test.{ts,tsx}"

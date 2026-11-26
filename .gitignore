@@ -1,0 +1,19 @@
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+playwright-report/
+test-results/
+*.log
+
+# Bảo vệ dữ liệu riêng tư & Trí nhớ cá nhân của từng người bạn khi git pull / git push
+01_TaiLieu_DauVao/*
+!01_TaiLieu_DauVao/README.md
+02_KetQua_NghiemThu/*
+!02_KetQua_NghiemThu/README.md
+03_HoSo_TriNho_CaNhan/USER-STYLE-DNA.md
+03_HoSo_TriNho_CaNhan/VOICE-GLOSSARY.md
+03_HoSo_TriNho_CaNhan/LESSONS-LEARNED.md
+*.db
+*.sqlite

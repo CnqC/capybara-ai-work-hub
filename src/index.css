@@ -1,0 +1,82 @@
+/* hallmark: v2.0.0 · shape: workbench · theme: capybara-onsen (custom) · genre: editorial · signature: iterative-voice-blueprint-gate */
+/* critique: hierarchy=clear-4-pillar-workbench; contrast=ink-on-warm-paper-AAA; rhythm=compact-tabular-cards */
+/* waivers: none */
+@import "tailwindcss";
+
+:root {
+  --bg-paper: #FAF6F0;
+  --bg-surface: #F2EBE1;
+  --bg-card: #FFFFFF;
+  --bg-badge: #EDE2D3;
+  --text-ink: #231B15;
+  --text-muted: #5E4F43;
+  --accent-yuzu: #C85A17;
+  --accent-yuzu-soft: #FDEBD9;
+  --accent-matcha: #24613B;
+  --accent-matcha-soft: #E3F3E8;
+  --accent-terracotta: #A83324;
+  --accent-terracotta-soft: #FCE8E5;
+  --border-warm: #DCCDBE;
+  --focus-ring: #C85A17;
+  --font-display: 'Fraunces', Georgia, serif;
+  --font-sans: 'Be Vietnam Pro', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+}
+
+html,
+body {
+  overflow-x: clip;
+  background-color: var(--bg-paper);
+  color: var(--text-ink);
+  font-family: var(--font-sans);
+  line-height: 1.55;
+  margin: 0;
+  padding: 0;
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--font-display);
+  overflow-wrap: break-word;
+  min-width: 0;
+}
+
+code,
+pre,
+.tabular-nums {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+button,
+input,
+select,
+textarea,
+a {
+  transition:
+    background-color 160ms cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 160ms cubic-bezier(0.22, 1, 0.36, 1),
+    color 160ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 160ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 160ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
