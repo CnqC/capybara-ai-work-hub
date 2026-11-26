@@ -4,12 +4,14 @@ using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
+using System.Windows.Threading;
 
 namespace CapybaraHub
 {
@@ -24,6 +26,7 @@ namespace CapybaraHub
         private static readonly Color ColBgInput = Color.FromRgb(14, 11, 9);       // #0E0B09
         private static readonly Color ColBorder = Color.FromRgb(66, 53, 43);       // #42352B
         private static readonly Color ColYuzu = Color.FromRgb(234, 106, 32);       // #EA6A20
+        private static readonly Color ColRecording = Color.FromRgb(220, 38, 38);   // #DC2626
         private static readonly Color ColMatcha = Color.FromRgb(16, 185, 129);     // #10B981
         private static readonly Color ColSky = Color.FromRgb(56, 189, 248);        // #38BDF8
         private static readonly Color ColTextMain = Color.FromRgb(250, 246, 240);  // #FAF6F0
@@ -35,6 +38,10 @@ namespace CapybaraHub
         private string _selectedCli = "agy";
         private int _blueprintRevision = 1;
 
+        private readonly CapyVoiceRecorder _voiceRecorder = new CapyVoiceRecorder();
+        private DispatcherTimer _micMeterTimer;
+        private string _lastRecordedWavPath = "";
+
         private readonly Dictionary<CapyWorkMode, Border> _modeCards = new Dictionary<CapyWorkMode, Border>();
         private readonly Dictionary<string, Border> _cliPills = new Dictionary<string, Border>();
 
@@ -45,6 +52,11 @@ namespace CapybaraHub
         private TextBlock _tabControlText;
         private Border _tabWorkflowBtn;
         private TextBlock _tabWorkflowText;
+
+        private Button _micBtn;
+        private Border _micMeterContainer;
+        private Border _micMeterFillBar;
+        private TextBlock _micMeterHintText;
 
         private TextBox _workDirBox;
         private TextBox _voiceInputBox;
@@ -70,7 +82,7 @@ namespace CapybaraHub
                     if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
 
                     win.Width = 1260;
-                    win.Height = 700;
+                    win.Height = 710;
                     if (args[0] == "--screenshot-workflow")
                     {
                         win.SwitchPage(1);
@@ -117,18 +129,36 @@ namespace CapybaraHub
 
             Title = "Capybara AI Hub";
             Width = 1260;
-            Height = 700;
+            Height = 710;
             MinWidth = 1020;
-            MinHeight = 620;
+            MinHeight = 640;
             WindowStartupLocation = WindowStartupLocation.CenterScreen;
             Background = new SolidColorBrush(ColBgMain);
             FontFamily = new FontFamily("Segoe UI");
 
             AllowDrop = true;
             Drop += OnWindowDrop;
+            Closed += delegate { _voiceRecorder.Dispose(); };
 
             BuildUi();
+            SetupMicMeterTimer();
             SelectMode(CapyWorkMode.WpsDocument, true);
+        }
+
+        private void SetupMicMeterTimer()
+        {
+            _micMeterTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(60) };
+            _micMeterTimer.Tick += delegate
+            {
+                if (!_voiceRecorder.IsRecording) return;
+                TimeSpan elapsed = DateTime.Now - _voiceRecorder.StartedAt;
+                string timeStr = elapsed.ToString(@"mm\:ss");
+                _micBtn.Content = "🔴  ĐANG THU ÂM (" + timeStr + ") — ẤN LẠI ĐỂ DỪNG & DỊCH";
+
+                double level = _voiceRecorder.CurrentLevel;
+                double maxBarW = _micMeterContainer.ActualWidth > 20 ? _micMeterContainer.ActualWidth - 4 : 380;
+                _micMeterFillBar.Width = Math.Max(8, maxBarW * level);
+            };
         }
 
         private void BuildUi()
@@ -209,7 +239,7 @@ namespace CapybaraHub
             });
             titleStack.Children.Add(new TextBlock
             {
-                Text = "● Nói Mic   ->   ● Confirm Kết Quả Cuối   ->   ● Subagents & QA Liên Tục",
+                Text = "● Nói Mic Trực Tiếp   ->   ● Confirm Kết Quả Cuối   ->   ● Subagents & QA Liên Tục",
                 Foreground = new SolidColorBrush(ColMatcha),
                 FontSize = 11.5,
                 Margin = new Thickness(0, 2, 0, 0)
@@ -340,6 +370,7 @@ namespace CapybaraHub
             s2.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             s2.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             s2.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            s2.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             s2.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
             s2.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
@@ -347,9 +378,9 @@ namespace CapybaraHub
             Grid.SetRow(sec2Header, 0);
             s2.Children.Add(sec2Header);
 
-            Button micBtn = new Button
+            _micBtn = new Button
             {
-                Content = "🎙  ẤN ĐỂ NÓI VÀO MIC (Bật Mic Tiếng Việt)",
+                Content = "🎙  ẤN ĐỂ NÓI VÀO MIC (Thu Âm Tiếng Việt Trực Tiếp)",
                 Background = new SolidColorBrush(ColYuzu),
                 Foreground = Brushes.White,
                 BorderThickness = new Thickness(0),
@@ -357,18 +388,44 @@ namespace CapybaraHub
                 FontSize = 14,
                 FontWeight = FontWeights.Bold,
                 Cursor = Cursors.Hand,
-                Margin = new Thickness(0, 0, 0, 10)
+                Margin = new Thickness(0, 0, 0, 6)
             };
-            micBtn.Click += delegate
+            _micBtn.Click += OnMicButtonClick;
+            Grid.SetRow(_micBtn, 1);
+            s2.Children.Add(_micBtn);
+
+            // Live Microphone Audio Level Meter Bar
+            StackPanel meterPanel = new StackPanel { Margin = new Thickness(0, 0, 0, 8) };
+            _micMeterContainer = new Border
             {
-                _voiceInputBox.Focus();
-                _voiceInputBox.SelectAll();
-                CapyHubEngine.TriggerWindowsVoiceTyping();
-                if (_statusLogLabel != null)
-                    _statusLogLabel.Text = "🎙 Đang nghe Mic tiếng Việt... Hãy nói yêu cầu!";
+                Height = 8,
+                Background = new SolidColorBrush(ColBgInput),
+                BorderBrush = new SolidColorBrush(ColBorder),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(4),
+                HorizontalAlignment = HorizontalAlignment.Stretch
             };
-            Grid.SetRow(micBtn, 1);
-            s2.Children.Add(micBtn);
+            _micMeterFillBar = new Border
+            {
+                Height = 6,
+                Width = 0,
+                Background = new SolidColorBrush(ColMatcha),
+                CornerRadius = new CornerRadius(3),
+                HorizontalAlignment = HorizontalAlignment.Left
+            };
+            _micMeterContainer.Child = _micMeterFillBar;
+            meterPanel.Children.Add(_micMeterContainer);
+
+            _micMeterHintText = new TextBlock
+            {
+                Text = "● Micro sẵn sàng: Ấn nút cam để bắt đầu nói, ấn lần nữa khi nói xong để tự chuyển thành chữ.",
+                Foreground = new SolidColorBrush(ColTextSub),
+                FontSize = 11,
+                Margin = new Thickness(0, 4, 0, 0)
+            };
+            meterPanel.Children.Add(_micMeterHintText);
+            Grid.SetRow(meterPanel, 2);
+            s2.Children.Add(meterPanel);
 
             _voiceInputBox = new TextBox
             {
@@ -379,12 +436,12 @@ namespace CapybaraHub
                 BorderThickness = new Thickness(1.2),
                 Padding = new Thickness(12, 10, 12, 10),
                 FontSize = 13,
-                Height = 76,
+                Height = 72,
                 TextWrapping = TextWrapping.Wrap,
                 AcceptsReturn = true
             };
             _voiceInputBox.TextChanged += delegate { RefreshBlueprintPreview(); };
-            Grid.SetRow(_voiceInputBox, 2);
+            Grid.SetRow(_voiceInputBox, 3);
             s2.Children.Add(_voiceInputBox);
 
             Border previewCard = new Border
@@ -393,8 +450,8 @@ namespace CapybaraHub
                 BorderBrush = new SolidColorBrush(ColMatcha),
                 BorderThickness = new Thickness(1.5),
                 CornerRadius = new CornerRadius(12),
-                Padding = new Thickness(16, 14, 16, 14),
-                Margin = new Thickness(0, 12, 0, 12)
+                Padding = new Thickness(16, 12, 16, 12),
+                Margin = new Thickness(0, 10, 0, 10)
             };
             StackPanel previewSp = new StackPanel();
             _blueprintHeaderLabel = new TextBlock
@@ -403,20 +460,20 @@ namespace CapybaraHub
                 Foreground = new SolidColorBrush(ColMatcha),
                 FontSize = 13,
                 FontWeight = FontWeights.Bold,
-                Margin = new Thickness(0, 0, 0, 8)
+                Margin = new Thickness(0, 0, 0, 6)
             };
             previewSp.Children.Add(_blueprintHeaderLabel);
 
             _blueprintPreviewBox = new TextBlock
             {
                 Foreground = new SolidColorBrush(ColTextMain),
-                FontSize = 12.8,
-                LineHeight = 22,
+                FontSize = 12.6,
+                LineHeight = 21,
                 TextWrapping = TextWrapping.Wrap
             };
             previewSp.Children.Add(_blueprintPreviewBox);
             previewCard.Child = previewSp;
-            Grid.SetRow(previewCard, 3);
+            Grid.SetRow(previewCard, 4);
             s2.Children.Add(previewCard);
 
             Grid actionRow = new Grid();
@@ -430,7 +487,7 @@ namespace CapybaraHub
                 Foreground = new SolidColorBrush(ColYuzu),
                 BorderBrush = new SolidColorBrush(ColYuzu),
                 BorderThickness = new Thickness(1.5),
-                Padding = new Thickness(12, 13, 12, 13),
+                Padding = new Thickness(12, 12, 12, 12),
                 FontSize = 13,
                 FontWeight = FontWeights.Bold,
                 Cursor = Cursors.Hand,
@@ -446,7 +503,7 @@ namespace CapybaraHub
                 Background = new SolidColorBrush(ColMatcha),
                 Foreground = Brushes.White,
                 BorderThickness = new Thickness(0),
-                Padding = new Thickness(12, 13, 12, 13),
+                Padding = new Thickness(12, 12, 12, 12),
                 FontSize = 13.5,
                 FontWeight = FontWeights.Bold,
                 Cursor = Cursors.Hand,
@@ -456,7 +513,7 @@ namespace CapybaraHub
             Grid.SetColumn(approveBtn, 1);
             actionRow.Children.Add(approveBtn);
 
-            Grid.SetRow(actionRow, 4);
+            Grid.SetRow(actionRow, 5);
             s2.Children.Add(actionRow);
 
             col2.Child = s2;
@@ -567,7 +624,7 @@ namespace CapybaraHub
 
             _statusLogLabel = new TextBlock
             {
-                Text = "✔ Sẵn sàng! Chọn việc -> Nói Mic -> Duyệt Confirm.",
+                Text = "✔ Sẵn sàng! Chọn việc -> Ấn nút Mic để nói -> Duyệt Confirm.",
                 Foreground = new SolidColorBrush(ColMatcha),
                 FontSize = 11.5,
                 TextWrapping = TextWrapping.Wrap
@@ -579,6 +636,73 @@ namespace CapybaraHub
             g.Children.Add(col3);
 
             return g;
+        }
+
+        private void OnMicButtonClick(object sender, RoutedEventArgs e)
+        {
+            if (!_voiceRecorder.IsRecording)
+            {
+                string err;
+                if (!_voiceRecorder.StartRecording(out err))
+                {
+                    _micMeterHintText.Text = "⚠ " + err;
+                    _micMeterHintText.Foreground = new SolidColorBrush(ColRecording);
+                    return;
+                }
+
+                _micBtn.Background = new SolidColorBrush(ColRecording);
+                _micBtn.Content = "🔴  ĐANG THU ÂM (00:00) — ẤN LẠI ĐỂ DỪNG & DỊCH";
+                _micMeterHintText.Text = "🎙 Hãy nói vào Micro... Thanh sóng âm xanh bên trên đang nhảy theo giọng bạn.";
+                _micMeterHintText.Foreground = new SolidColorBrush(ColMatcha);
+                _micMeterTimer.Start();
+                _statusLogLabel.Text = "🔴 Đang thu âm trực tiếp từ Micro...";
+            }
+            else
+            {
+                _micMeterTimer.Stop();
+                _micMeterFillBar.Width = 0;
+
+                string wavOut = System.IO.Path.Combine(_hubRoot, "01_TaiLieu_DauVao", "voice-prompt-latest.wav");
+                _lastRecordedWavPath = _voiceRecorder.StopAndSaveWav(wavOut);
+
+                _micBtn.IsEnabled = false;
+                _micBtn.Background = new SolidColorBrush(ColBgCard);
+                _micBtn.Content = "⏳  ĐANG NHẬN DIỆN GIỌNG NÓI TIẾNG VIỆT...";
+                _micMeterHintText.Text = "⏳ Đang chuyển file thu âm (" + System.IO.Path.GetFileName(_lastRecordedWavPath) + ") thành văn bản...";
+                _micMeterHintText.Foreground = new SolidColorBrush(ColYuzu);
+
+                string hubRootCopy = _hubRoot;
+                string wavCopy = _lastRecordedWavPath;
+
+                Task.Run(delegate
+                {
+                    string sttErr;
+                    string transcript = CapyVoiceRecorder.TranscribeWavFileToVietnamese(hubRootCopy, wavCopy, out sttErr);
+
+                    Dispatcher.Invoke(delegate
+                    {
+                        _micBtn.IsEnabled = true;
+                        _micBtn.Background = new SolidColorBrush(ColYuzu);
+                        _micBtn.Content = "🎙  ẤN ĐỂ NÓI VÀO MIC (Thu Âm Tiếng Việt Trực Tiếp)";
+
+                        if (!string.IsNullOrWhiteSpace(transcript))
+                        {
+                            _blueprintRevision++;
+                            _voiceInputBox.Text = transcript;
+                            RefreshBlueprintPreview();
+                            _micMeterHintText.Text = "✔ Đã thu âm & dịch chính xác lời nói của bạn! Xem Hình Dung Kết Quả Cuối bên dưới.";
+                            _micMeterHintText.Foreground = new SolidColorBrush(ColMatcha);
+                            _statusLogLabel.Text = "✔ Thu âm thành công: \"" + transcript + "\"";
+                        }
+                        else
+                        {
+                            _micMeterHintText.Text = "⚠ Đã lưu file âm thanh voice-prompt-latest.wav nhưng chưa nghe rõ lời nói. Hãy thử nói to hơn gần Mic!";
+                            _micMeterHintText.Foreground = new SolidColorBrush(ColYuzu);
+                            _statusLogLabel.Text = "ℹ Đã lưu file ghi âm tại 01_TaiLieu_DauVao/voice-prompt-latest.wav.";
+                        }
+                    });
+                });
+            }
         }
 
         private void SelectMode(CapyWorkMode mode, bool resetVoiceSample)

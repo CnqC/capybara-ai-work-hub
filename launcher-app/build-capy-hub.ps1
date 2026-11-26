@@ -17,7 +17,7 @@ Remove-Item $iconGenExe -Force -ErrorAction SilentlyContinue
 
 Get-Process -Name "Capybara-Hub" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 
-Write-Host "2. Bien dich Capybara-Hub.exe (Native Windows Desktop App - 0 Dependency)..." -ForegroundColor Cyan
+Write-Host "2. Bien dich Capybara-Hub.exe (Native Windows Desktop App + Direct WinMM Mic Recorder)..." -ForegroundColor Cyan
 & $csc /nologo /codepage:65001 /target:winexe /optimize+ `
   /win32icon:$icoPath `
   /out:$outExe `
@@ -25,6 +25,7 @@ Write-Host "2. Bien dich Capybara-Hub.exe (Native Windows Desktop App - 0 Depend
   /r:"$wpfDir\PresentationCore.dll" `
   /r:"$wpfDir\WindowsBase.dll" `
   /r:System.Xaml.dll `
+  (Join-Path $appDir "CapyVoiceRecorder.cs") `
   (Join-Path $appDir "CapyHubModels.cs") `
   (Join-Path $appDir "CapyWorkflowView.cs") `
   (Join-Path $appDir "CapyMainWindow.cs")
