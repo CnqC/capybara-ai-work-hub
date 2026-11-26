@@ -584,7 +584,7 @@ namespace CapybaraHub
             StackPanel memSp = new StackPanel();
             memSp.Children.Add(new TextBlock
             {
-                Text = "🧠 Trí Nhớ Dài Hạn Cá Nhân",
+                Text = "🗣 Dạy Mic Từ Tiếng Anh Hay Nói Lệch",
                 Foreground = new SolidColorBrush(ColYuzu),
                 FontSize = 13,
                 FontWeight = FontWeights.Bold,
@@ -592,13 +592,60 @@ namespace CapybaraHub
             });
             memSp.Children.Add(new TextBlock
             {
-                Text = "Tự nhớ văn phong WPS, từ điển giọng nói & cách trình bày của bạn.",
+                Text = "Đã tích hợp sẵn 120+ từ Việt-Anh (confirm, task, file, WPS, CapCut...). Thêm từ riêng của bạn:",
                 Foreground = new SolidColorBrush(ColTextSub),
-                FontSize = 11.5,
-                TextWrapping = TextWrapping.Wrap
+                FontSize = 11.2,
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 0, 0, 6)
             });
-            Button editDnaBtn = CreateFlatButton("✏ Sửa Gu Cá Nhân (STYLE-DNA)", ColBgPanel, ColTextMain);
-            editDnaBtn.Margin = new Thickness(0, 8, 0, 0);
+
+            Grid addWordGrid = new Grid { Margin = new Thickness(0, 0, 0, 6) };
+            addWordGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            addWordGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+            TextBox spokenBox = new TextBox
+            {
+                Text = "tát vụ",
+                Background = new SolidColorBrush(ColBgInput),
+                Foreground = new SolidColorBrush(ColTextMain),
+                BorderBrush = new SolidColorBrush(ColBorder),
+                Padding = new Thickness(7, 5, 7, 5),
+                FontSize = 11.5,
+                Margin = new Thickness(0, 0, 4, 0),
+                ToolTip = "Âm tiếng Việt Mic hay nghe ra"
+            };
+            Grid.SetColumn(spokenBox, 0);
+            addWordGrid.Children.Add(spokenBox);
+
+            TextBox targetBox = new TextBox
+            {
+                Text = "task",
+                Background = new SolidColorBrush(ColBgInput),
+                Foreground = new SolidColorBrush(ColTextMain),
+                BorderBrush = new SolidColorBrush(ColBorder),
+                Padding = new Thickness(7, 5, 7, 5),
+                FontSize = 11.5,
+                Margin = new Thickness(4, 0, 0, 0),
+                ToolTip = "Từ tiếng Anh chuẩn muốn đổi thành"
+            };
+            Grid.SetColumn(targetBox, 1);
+            addWordGrid.Children.Add(targetBox);
+            memSp.Children.Add(addWordGrid);
+
+            Button addGlossaryBtn = CreateFlatButton("➕ Lưu Vào Từ Điển Mic (VOICE-GLOSSARY)", ColBgPanel, ColMatcha);
+            addGlossaryBtn.Click += delegate
+            {
+                if (CapyHubEngine.AddCustomVietlishRule(_hubRoot, spokenBox.Text, targetBox.Text))
+                {
+                    _voiceInputBox.Text = CapyHubEngine.NormalizeVoiceText(_voiceInputBox.Text);
+                    RefreshBlueprintPreview();
+                    _statusLogLabel.Text = "✔ Đã dạy Mic: \"" + spokenBox.Text.Trim() + "\" -> \"" + targetBox.Text.Trim() + "\"!";
+                }
+            };
+            memSp.Children.Add(addGlossaryBtn);
+
+            Button editDnaBtn = CreateFlatButton("✏ Mở Hồ Sơ Phong Cách (STYLE-DNA)", ColBgPanel, ColTextMain);
+            editDnaBtn.Margin = new Thickness(0, 6, 0, 0);
             editDnaBtn.Click += delegate { OpenFileInEditor("03_HoSo_TriNho_CaNhan\\USER-STYLE-DNA.template.md"); };
             memSp.Children.Add(editDnaBtn);
             memCard.Child = memSp;

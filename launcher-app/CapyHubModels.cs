@@ -30,13 +30,6 @@ namespace CapybaraHub
 
     public static class CapyHubEngine
     {
-        [DllImport("user32.dll")]
-        private static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
-
-        private const byte VK_LWIN = 0x5B;
-        private const byte VK_H = 0x48;
-        private const uint KEYEVENTF_KEYUP = 0x0002;
-
         public static string GetHubRoot()
         {
             string baseDir = AppDomain.CurrentDomain.BaseDirectory.TrimEnd('\\', '/');
@@ -115,30 +108,125 @@ namespace CapybaraHub
             };
         }
 
+        private static readonly string[][] BuiltInVietlishPairs = new string[][]
+        {
+            new string[] { @"\b(vê\s*kép\s*pi\s*ét|đắp\s*lưu\s*pi\s*ét|đắp\s*lưu\s*bi\s*ét|vê\s*đúp\s*pi\s*ét|w\s*b\s*s|w\s*p\s*s)\b", "WPS Office" },
+            new string[] { @"\b(cáp\s*cắt|cắp\s*cắt|cáp\s*cất|cap\s*cut)\b", "CapCut" },
+            new string[] { @"\b(sấp\s*ây\s*gần|sắp\s*ây\s*gần|súp\s*ây\s*gần|sắp\s*ê\s*gần|sub\s*ây\s*gần|sấp\s*ê\s*giần|sắp\s*agent)\b", "subagent" },
+            new string[] { @"\b(ây\s*gần|ê\s*gần|ê\s*giần)\b", "agent" },
+            new string[] { @"\b(ha\s*nét|ha\s*nết|hơ\s*nét|hơ\s*nít)\b", "harness" },
+            new string[] { @"\b(con\s*phơm|cần\s*phơm|cơn\s*phơm|còn\s*phơm)\b", "confirm" },
+            new string[] { @"\b(pờ\s*rôm|câu\s*rôm|chạy\s*rôm)\b", "prompt" },
+            new string[] { @"\b(tát\s*vụ|chia\s*tát|nhận\s*tát|giao\s*tát|làm\s*tát|xử\s*lý\s*tát)\b", "task" },
+            new string[] { @"\b(sờ\s*kiu|sờ\s*kin|mắt\s*sờ\s*kiu|max\s*sờ\s*kiu)\b", "skill" },
+            new string[] { @"\b(ích\s*seo|éc\s*seo)\b", "Excel" },
+            new string[] { @"\b(pao\s*ơ\s*poi|pao\s*vơ\s*poi)\b", "PowerPoint" },
+            new string[] { @"\b(bi\s*đi\s*ép|pi\s*đi\s*ép)\b", "PDF" },
+            new string[] { @"\b(sờ\s*lai|sơ\s*lai)\b", "slide" },
+            new string[] { @"\b(đa\s*ta|đê\s*ta)\b", "data" },
+            new string[] { @"\b(ê\s*đít|ờ\s*đít)\b", "edit" },
+            new string[] { @"\b(tham\s*lai|thai\s*lai)\b", "timeline" },
+            new string[] { @"\b(vi\s*đê\s*ô|vi\s*đi\s*ô)\b", "video" },
+            new string[] { @"\b(tem\s*pờ\s*lết|tem\s*lết)\b", "template" },
+            new string[] { @"\b(pho\s*mát|phó\s*mát)\b", "format" },
+            new string[] { @"\b(ắp\s*đết|ấp\s*đết)\b", "update" },
+            new string[] { @"\b(ri\s*viu|rì\s*viu)\b", "review" },
+            new string[] { @"\b(ri\s*pọt|rì\s*pọt)\b", "report" },
+            new string[] { @"\b(đát\s*bo|đát\s*bót)\b", "dashboard" },
+            new string[] { @"\b(cát\s*phờ\s*lâu)\b", "cashflow" },
+            new string[] { @"\b(guộc\s*phờ\s*lâu|guốc\s*phờ\s*lâu)\b", "workflow" },
+            new string[] { @"\b(phôn\s*đơ|phâu\s*đơ)\b", "folder" },
+            new string[] { @"\b(gít\s*hấp|gít\s*hắp)\b", "GitHub" },
+            new string[] { @"\b(ca\s*pi\s*ba\s*ra|ca\s*bi\s*ba\s*ra)\b", "Capybara" },
+            new string[] { @"\b(bút\s*tông|bất\s*tần)\b", "button" },
+            new string[] { @"\b(in\s*pút)\b", "input" },
+            new string[] { @"\b(ao\s*pút)\b", "output" }
+        };
+
         public static string NormalizeVoiceText(string raw)
         {
             if (string.IsNullOrWhiteSpace(raw)) return "";
             string s = raw.Trim();
-            s = Regex.Replace(s, @"(?i)\b(w\s*b\s*s|vê\s*kép\s*pi\s*ét|đắp\s*lưu\s*pi\s*ét)\b", "WPS Office");
-            s = Regex.Replace(s, @"(?i)\b(cáp\s*cắt|cắp\s*cắt|cap\s*cut)\b", "CapCut");
-            s = Regex.Replace(s, @"(?i)\b(sấp\s*ây\s*gần|sub\s*ê\s*gần)\b", "Subagent");
+
+            // 1. Load custom phonetic mappings from VOICE-GLOSSARY.md if present
+            try
+            {
+                string hubRoot = GetHubRoot();
+                string[] glossaryFiles = new string[]
+                {
+                    Path.Combine(hubRoot, "03_HoSo_TriNho_CaNhan", "VOICE-GLOSSARY.md"),
+                    Path.Combine(hubRoot, "03_HoSo_TriNho_CaNhan", "VOICE-GLOSSARY.template.md")
+                };
+                foreach (string gf in glossaryFiles)
+                {
+                    if (!File.Exists(gf)) continue;
+                    foreach (string line in File.ReadAllLines(gf, Encoding.UTF8))
+                    {
+                        string t = line.Trim();
+                        if (!t.StartsWith("|") || t.Contains("spokenPhrase") || t.Contains("---")) continue;
+                        string[] parts = t.Trim('|').Split('|');
+                        if (parts.Length >= 2)
+                        {
+                            string spokenList = parts[0].Trim().Trim('`');
+                            string targetTerm = parts[1].Trim().Trim('`');
+                            if (string.IsNullOrEmpty(spokenList) || string.IsNullOrEmpty(targetTerm) || targetTerm.StartsWith("[TRIGGER"))
+                                continue;
+                            foreach (string ph in spokenList.Split(','))
+                            {
+                                string cleanPh = ph.Trim().Trim('`');
+                                if (cleanPh.Length > 1)
+                                {
+                                    s = Regex.Replace(s, @"(?i)\b" + Regex.Escape(cleanPh) + @"\b", targetTerm);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            catch { }
+
+            // 2. Apply built-in Viet-lish phonetic rules
+            foreach (string[] pair in BuiltInVietlishPairs)
+            {
+                s = Regex.Replace(s, "(?i)" + pair[0], pair[1]);
+            }
+
             s = Regex.Replace(s, @"(?i)(?:^|\s)(à\s*ừm|à\s*khoan|ừm\s*thì)(?=\s|$)", " ");
             while (s.Contains("  ")) s = s.Replace("  ", " ");
             return s.Trim();
         }
 
-        public static void TriggerWindowsVoiceTyping()
+        public static bool AddCustomVietlishRule(string hubRoot, string spokenVietlish, string englishTarget)
         {
-            try
+            if (string.IsNullOrWhiteSpace(spokenVietlish) || string.IsNullOrWhiteSpace(englishTarget))
+                return false;
+
+            string memDir = Path.Combine(hubRoot, "03_HoSo_TriNho_CaNhan");
+            Directory.CreateDirectory(memDir);
+            string newLine = "| `" + spokenVietlish.Trim() + "` | `" + englishTarget.Trim() + "` | `custom` |" + Environment.NewLine;
+
+            string[] targets = new string[]
             {
-                // Sends Win + H to open native Windows 10/11 Vietnamese Voice Typing overlay immediately
-                keybd_event(VK_LWIN, 0, 0, UIntPtr.Zero);
-                keybd_event(VK_H, 0, 0, UIntPtr.Zero);
-                Thread.Sleep(30);
-                keybd_event(VK_H, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
-                keybd_event(VK_LWIN, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+                Path.Combine(memDir, "VOICE-GLOSSARY.md"),
+                Path.Combine(memDir, "VOICE-GLOSSARY.template.md")
+            };
+
+            foreach (string path in targets)
+            {
+                try
+                {
+                    if (!File.Exists(path) && File.Exists(targets[1]))
+                    {
+                        File.Copy(targets[1], path, false);
+                    }
+                    if (File.Exists(path))
+                    {
+                        File.AppendAllText(path, newLine, new UTF8Encoding(false));
+                    }
+                }
+                catch { }
             }
-            catch { }
+            return true;
         }
 
         public static string WriteBlueprintAndTaskFiles(
@@ -167,7 +255,7 @@ namespace CapybaraHub
             bp.AppendLine("---");
             bp.AppendLine("# Bản Hình Dung Kết Quả Cuối (Lần #" + revision + ")");
             bp.AppendLine();
-            bp.AppendLine("## 1. Yêu Cầu Đã Nhận Từ Mic (Đã Chuẩn Hóa)");
+            bp.AppendLine("## 1. Yêu Cầu Đã Nhận Từ Mic (Đã Chuẩn Hóa Việt - Anh)");
             bp.AppendLine("> " + cleanVoice);
             bp.AppendLine();
             bp.AppendLine("## 2. Kết Quả Bạn Sẽ Nhận Được");
