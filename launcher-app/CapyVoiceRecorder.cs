@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Web.Script.Serialization;
 
 namespace CapybaraHub
 {
@@ -15,7 +16,7 @@ namespace CapybaraHub
         private const int SAMPLE_RATE = 16000;
         private const int CHANNELS = 1;
         private const int BITS_PER_SAMPLE = 16;
-        private const int BUFFER_COUNT = 4;
+        private const int BUFFER_COUNT = 5;
         private const int BUFFER_SIZE = 3200; // 100ms at 16kHz 16-bit mono
 
         [StructLayout(LayoutKind.Sequential)]
@@ -82,6 +83,9 @@ namespace CapybaraHub
         public bool IsRecording { get; private set; }
         public double CurrentLevel { get; private set; }
         public DateTime StartedAt { get; private set; }
+        public bool HasDetectedSpeech { get; private set; }
+        public DateTime LastSpeechAt { get; private set; }
+        private double _noiseFloor = 450.0;
 
         public static bool HasMicrophoneDevice()
         {
@@ -104,6 +108,10 @@ namespace CapybaraHub
             {
                 _pcmStream = new MemoryStream();
                 CurrentLevel = 0.0;
+                HasDetectedSpeech = false;
+                StartedAt = DateTime.Now;
+                LastSpeechAt = DateTime.Now;
+                _noiseFloor = 450.0;
 
                 WAVEFORMATEX fmt = new WAVEFORMATEX
                 {
@@ -120,12 +128,11 @@ namespace CapybaraHub
                 int res = waveInOpen(out _hWaveIn, -1, ref fmt, _callbackDelegate, IntPtr.Zero, CALLBACK_FUNCTION);
                 if (res != 0 || _hWaveIn == IntPtr.Zero)
                 {
-                    errorMessage = "Không thể mở Micro (Mã lỗi WinMM: " + res + "). Hãy kiểm tra quyền truy cập Micro trong Windows Privacy Settings.";
+                    errorMessage = "Không thể mở Micro (Mã lỗi WinMM: " + res + "). Hãy kiểm tra quyền Micro trong Windows Privacy Settings.";
                     return false;
                 }
 
                 IsRecording = true;
-                StartedAt = DateTime.Now;
 
                 int hdrSize = Marshal.SizeOf(typeof(WAVEHDR));
                 for (int i = 0; i < BUFFER_COUNT; i++)
@@ -166,15 +173,37 @@ namespace CapybaraHub
                     byte[] chunk = new byte[hdr.dwBytesRecorded];
                     Marshal.Copy(hdr.lpData, chunk, 0, hdr.dwBytesRecorded);
 
-                    // Calculate real-time voice peak level for visual VU meter bar
                     int maxSample = 1;
+                    long sumAbs = 0;
+                    int sampleCount = 0;
                     for (int i = 0; i + 1 < chunk.Length; i += 2)
                     {
                         short sample = BitConverter.ToInt16(chunk, i);
                         int abs = sample == short.MinValue ? 32767 : Math.Abs((int)sample);
                         if (abs > maxSample) maxSample = abs;
+                        sumAbs += abs;
+                        sampleCount++;
                     }
-                    CurrentLevel = Math.Min(1.0, maxSample / 14000.0);
+
+                    double avgAmp = sampleCount > 0 ? (double)sumAbs / sampleCount : 0.0;
+                    CurrentLevel = Math.Min(1.0, maxSample / 8000.0);
+
+                    // Adaptive Voice Activity Detection (VAD):
+                    // Calibrate ambient noise floor during first 0.25s, then detect voice when amplitude exceeds threshold
+                    double elapsedSec = (DateTime.Now - StartedAt).TotalSeconds;
+                    if (elapsedSec < 0.25)
+                    {
+                        _noiseFloor = Math.Max(250.0, Math.Min(1800.0, (_noiseFloor * 0.7) + (avgAmp * 0.3)));
+                    }
+                    else
+                    {
+                        double voiceTrigger = Math.Max(550.0, _noiseFloor * 2.1);
+                        if (avgAmp > voiceTrigger || maxSample > voiceTrigger * 2.6)
+                        {
+                            HasDetectedSpeech = true;
+                            LastSpeechAt = DateTime.Now;
+                        }
+                    }
 
                     lock (_lock)
                     {
@@ -191,6 +220,15 @@ namespace CapybaraHub
                 }
             }
             catch { }
+        }
+
+        public bool ShouldAutoStopOnSilence()
+        {
+            if (!IsRecording || !HasDetectedSpeech) return false;
+            double silenceSec = (DateTime.Now - LastSpeechAt).TotalSeconds;
+            double totalSec = (DateTime.Now - StartedAt).TotalSeconds;
+            // Ngay khi người dùng nói xong và ngừng nói ~1.35 giây, tự động chốt thu âm để dịch ngay lập tức!
+            return totalSec >= 1.2 && silenceSec >= 1.35;
         }
 
         public string StopAndSaveWav(string outputWavPath)
@@ -278,40 +316,46 @@ namespace CapybaraHub
 
             try
             {
+                // Dùng cmd.exe /c python để gọi chính xác python.cmd trong PATH (tránh dính WindowsApps stub)
                 ProcessStartInfo psi = new ProcessStartInfo
                 {
-                    FileName = "python",
-                    Arguments = "\"" + scriptPath + "\" \"" + wavPath + "\"",
+                    FileName = "cmd.exe",
+                    Arguments = "/c python \"" + scriptPath + "\" \"" + wavPath + "\"",
                     WorkingDirectory = hubRoot,
                     UseShellExecute = false,
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
                     CreateNoWindow = true,
-                    StandardOutputEncoding = Encoding.UTF8
+                    StandardOutputEncoding = Encoding.UTF8,
+                    StandardErrorEncoding = Encoding.UTF8
                 };
 
                 using (Process proc = Process.Start(psi))
                 {
                     string stdout = proc.StandardOutput.ReadToEnd().Trim();
-                    proc.WaitForExit(12000);
+                    string stderr = proc.StandardError.ReadToEnd().Trim();
+                    proc.WaitForExit(15000);
 
-                    if (stdout.Contains("\"ok\": true") || stdout.Contains("\"ok\":true"))
+                    if (!string.IsNullOrWhiteSpace(stdout))
                     {
-                        int idx = stdout.IndexOf("\"transcript\":");
-                        if (idx >= 0)
+                        JavaScriptSerializer ser = new JavaScriptSerializer();
+                        IDictionary<string, object> dict = ser.DeserializeObject(stdout) as IDictionary<string, object>;
+                        if (dict != null)
                         {
-                            int firstQuote = stdout.IndexOf('"', idx + 13);
-                            int endQuote = stdout.IndexOf("\", \"wav_path\"", firstQuote + 1);
-                            if (endQuote < 0) endQuote = stdout.LastIndexOf('"');
-                            if (firstQuote >= 0 && endQuote > firstQuote)
+                            bool ok = dict.ContainsKey("ok") && dict["ok"] is bool && (bool)dict["ok"];
+                            if (ok && dict.ContainsKey("transcript") && dict["transcript"] != null)
                             {
-                                return stdout.Substring(firstQuote + 1, endQuote - firstQuote - 1);
+                                return dict["transcript"].ToString().Trim();
+                            }
+                            if (dict.ContainsKey("error") && dict["error"] != null)
+                            {
+                                errorMsg = dict["error"].ToString();
                             }
                         }
                     }
-                    else if (stdout.Contains("\"error\":"))
+                    else if (!string.IsNullOrWhiteSpace(stderr))
                     {
-                        errorMsg = stdout;
+                        errorMsg = stderr;
                     }
                 }
             }

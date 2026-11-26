@@ -25,6 +25,7 @@ Write-Host "2. Bien dich Capybara-Hub.exe (Native Windows Desktop App + Direct W
   /r:"$wpfDir\PresentationCore.dll" `
   /r:"$wpfDir\WindowsBase.dll" `
   /r:System.Xaml.dll `
+  /r:System.Web.Extensions.dll `
   (Join-Path $appDir "CapyVoiceRecorder.cs") `
   (Join-Path $appDir "CapyHubModels.cs") `
   (Join-Path $appDir "CapyWorkflowView.cs") `
