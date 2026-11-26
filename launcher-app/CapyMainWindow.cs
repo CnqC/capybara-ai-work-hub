@@ -41,6 +41,10 @@ namespace CapybaraHub
         private readonly CapyVoiceRecorder _voiceRecorder = new CapyVoiceRecorder();
         private DispatcherTimer _micMeterTimer;
         private string _lastRecordedWavPath = "";
+        private string _committedTranscript = "";
+        private string _livePartialTranscript = "";
+        private bool _isStreamingChunkBusy = false;
+        private DateTime _lastStreamChunkAt = DateTime.MinValue;
 
         private readonly Dictionary<CapyWorkMode, Border> _modeCards = new Dictionary<CapyWorkMode, Border>();
         private readonly Dictionary<string, Border> _cliPills = new Dictionary<string, Border>();
@@ -143,6 +147,7 @@ namespace CapybaraHub
             BuildUi();
             SetupMicMeterTimer();
             SelectMode(CapyWorkMode.WpsDocument, true);
+            Task.Run(delegate { _voiceRecorder.EnsureStreamingDaemonWarm(_hubRoot); });
         }
 
         private void SetupMicMeterTimer()
@@ -152,7 +157,7 @@ namespace CapybaraHub
             {
                 if (!_voiceRecorder.IsRecording) return;
 
-                if (_voiceRecorder.ShouldAutoStopOnSilence())
+                if (_voiceRecorder.ShouldAutoStopSessionOnSilence())
                 {
                     FinishMicRecordingAndTranscribe();
                     return;
@@ -160,9 +165,9 @@ namespace CapybaraHub
 
                 TimeSpan elapsed = DateTime.Now - _voiceRecorder.StartedAt;
                 string timeStr = elapsed.ToString(@"mm\:ss");
-                if (_voiceRecorder.HasDetectedSpeech)
+                if (_voiceRecorder.HasDetectedSpeechInSession)
                 {
-                    _micBtn.Content = "🔴  ĐANG NGHE BẠN NÓI (" + timeStr + ") — NGỪNG NÓI SẼ TỰ ĐỘNG DỊCH NGAY";
+                    _micBtn.Content = "🔴  ĐANG NGHE & HIỆN CHỮ TRỰC TIẾP (" + timeStr + ") — ẤN ĐỂ XONG";
                 }
                 else
                 {
@@ -172,7 +177,73 @@ namespace CapybaraHub
                 double level = _voiceRecorder.CurrentLevel;
                 double maxBarW = _micMeterContainer.ActualWidth > 20 ? _micMeterContainer.ActualWidth - 4 : 380;
                 _micMeterFillBar.Width = Math.Max(8, maxBarW * level);
+
+                // Streaming chữ trực tiếp ngay khi đang nói (mỗi 0.75 giây hoặc khi ngắt vế câu)
+                if (!_isStreamingChunkBusy && _voiceRecorder.HasDetectedSpeechInPhrase)
+                {
+                    bool commitClause = _voiceRecorder.ShouldCommitCurrentClause();
+                    double sinceLastStream = (DateTime.Now - _lastStreamChunkAt).TotalSeconds;
+                    if (commitClause || (sinceLastStream >= 0.75 && _voiceRecorder.GetActivePhraseByteLength() >= 18000))
+                    {
+                        TriggerLiveStreamingChunk(commitClause);
+                    }
+                }
             };
+        }
+
+        private void TriggerLiveStreamingChunk(bool isClauseCommit)
+        {
+            string snapWav = System.IO.Path.Combine(
+                _hubRoot,
+                "01_TaiLieu_DauVao",
+                isClauseCommit ? "voice-clause-commit.wav" : "voice-live-partial.wav");
+
+            if (!_voiceRecorder.TrySnapshotActivePhraseToWav(snapWav, isClauseCommit))
+                return;
+
+            _isStreamingChunkBusy = true;
+            _lastStreamChunkAt = DateTime.Now;
+            string hubRootCopy = _hubRoot;
+
+            Task.Run(delegate
+            {
+                string err;
+                string piece = _voiceRecorder.TranscribeViaWarmDaemon(hubRootCopy, snapWav, out err);
+                string cleanPiece = CapyHubEngine.NormalizeVoiceText(piece);
+
+                Dispatcher.Invoke(delegate
+                {
+                    _isStreamingChunkBusy = false;
+                    if (!string.IsNullOrWhiteSpace(cleanPiece))
+                    {
+                        if (isClauseCommit)
+                        {
+                            _committedTranscript = string.IsNullOrWhiteSpace(_committedTranscript)
+                                ? cleanPiece
+                                : (_committedTranscript + " " + cleanPiece);
+                            _livePartialTranscript = "";
+                        }
+                        else
+                        {
+                            _livePartialTranscript = cleanPiece;
+                        }
+
+                        string combined = string.IsNullOrWhiteSpace(_committedTranscript)
+                            ? _livePartialTranscript
+                            : (string.IsNullOrWhiteSpace(_livePartialTranscript)
+                                ? _committedTranscript
+                                : (_committedTranscript + " " + _livePartialTranscript));
+
+                        if (!string.IsNullOrWhiteSpace(combined))
+                        {
+                            _voiceInputBox.Text = combined;
+                            _voiceInputBox.CaretIndex = _voiceInputBox.Text.Length;
+                            RefreshBlueprintPreview();
+                            _micMeterHintText.Text = "⚡ Đang hiện chữ trực tiếp theo giọng nói: \"" + combined + "\"";
+                        }
+                    }
+                });
+            });
         }
 
         private void BuildUi()
@@ -704,19 +775,25 @@ namespace CapybaraHub
             if (!_voiceRecorder.IsRecording)
             {
                 string err;
-                if (!_voiceRecorder.StartRecording(out err))
+                if (!_voiceRecorder.StartRecording(_hubRoot, out err))
                 {
                     _micMeterHintText.Text = "⚠ " + err;
                     _micMeterHintText.Foreground = new SolidColorBrush(ColRecording);
                     return;
                 }
 
+                _committedTranscript = "";
+                _livePartialTranscript = "";
+                _isStreamingChunkBusy = false;
+                _lastStreamChunkAt = DateTime.Now;
+                _voiceInputBox.Text = "";
+
                 _micBtn.Background = new SolidColorBrush(ColRecording);
                 _micBtn.Content = "🔴  ĐANG LẮNG NGHE MIC (00:00) — HÃY BẮT ĐẦU NÓI...";
-                _micMeterHintText.Text = "🎙 Hãy nói vào Micro... Ngay khi bạn nói xong, hệ thống sẽ tự động dịch thành chữ và điền vào ô bên dưới!";
+                _micMeterHintText.Text = "🎙 Đã bật lọc nhiễu quạt/tạp âm DSP! Nói từ nào chữ sẽ hiện trực tiếp vào ô bên dưới.";
                 _micMeterHintText.Foreground = new SolidColorBrush(ColMatcha);
                 _micMeterTimer.Start();
-                _statusLogLabel.Text = "🔴 Đang nghe giọng nói từ Micro (tự động nhận diện khi bạn nói xong)...";
+                _statusLogLabel.Text = "🔴 Đang thu âm khử nhiễu & hiện chữ trực tiếp theo thời gian thực...";
             }
             else
             {
@@ -731,21 +808,24 @@ namespace CapybaraHub
             _micMeterFillBar.Width = 0;
 
             string wavOut = System.IO.Path.Combine(_hubRoot, "01_TaiLieu_DauVao", "voice-prompt-latest.wav");
-            _lastRecordedWavPath = _voiceRecorder.StopAndSaveWav(wavOut);
+            string tailWav;
+            _lastRecordedWavPath = _voiceRecorder.StopAndSaveWav(wavOut, out tailWav);
 
             _micBtn.IsEnabled = false;
             _micBtn.Background = new SolidColorBrush(ColBgCard);
-            _micBtn.Content = "⏳  ĐANG DỊCH GIỌNG NÓI THÀNH VĂN BẢN...";
-            _micMeterHintText.Text = "⏳ Đang dịch toàn bộ giọng nói vừa thu sang tiếng Việt...";
-            _micMeterHintText.Foreground = new SolidColorBrush(ColYuzu);
+            _micBtn.Content = "⏳  ĐANG CHỐT CÂU CUỐI...";
 
             string hubRootCopy = _hubRoot;
-            string wavCopy = _lastRecordedWavPath;
+            string wavToFinish = !string.IsNullOrEmpty(tailWav) && File.Exists(tailWav) ? tailWav : _lastRecordedWavPath;
+            bool useTailOnly = !string.IsNullOrEmpty(_committedTranscript) && !string.IsNullOrEmpty(tailWav);
 
             Task.Run(delegate
             {
                 string sttErr;
-                string transcript = CapyVoiceRecorder.TranscribeWavFileToVietnamese(hubRootCopy, wavCopy, out sttErr);
+                string transcript = _voiceRecorder.TranscribeViaWarmDaemon(
+                    hubRootCopy,
+                    useTailOnly ? wavToFinish : _lastRecordedWavPath,
+                    out sttErr);
 
                 Dispatcher.Invoke(delegate
                 {
@@ -753,25 +833,37 @@ namespace CapybaraHub
                     _micBtn.Background = new SolidColorBrush(ColYuzu);
                     _micBtn.Content = "🎙  ẤN ĐỂ NÓI VÀO MIC (Thu Âm Tiếng Việt Trực Tiếp)";
 
-                    if (!string.IsNullOrWhiteSpace(transcript))
+                    string finalCombined = "";
+                    if (useTailOnly && !string.IsNullOrWhiteSpace(transcript))
+                    {
+                        finalCombined = CapyHubEngine.NormalizeVoiceText(_committedTranscript + " " + transcript);
+                    }
+                    else if (!string.IsNullOrWhiteSpace(transcript))
+                    {
+                        finalCombined = CapyHubEngine.NormalizeVoiceText(transcript);
+                    }
+                    else if (!string.IsNullOrWhiteSpace(_voiceInputBox.Text))
+                    {
+                        finalCombined = CapyHubEngine.NormalizeVoiceText(_voiceInputBox.Text);
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(finalCombined))
                     {
                         _blueprintRevision++;
-                        string cleanText = CapyHubEngine.NormalizeVoiceText(transcript);
-                        _voiceInputBox.Text = cleanText;
+                        _voiceInputBox.Text = finalCombined;
                         _voiceInputBox.Focus();
                         _voiceInputBox.CaretIndex = _voiceInputBox.Text.Length;
                         RefreshBlueprintPreview();
-                        _micMeterHintText.Text = "✔ Đã dịch giọng nói và điền tự động vào ô văn bản bên dưới!";
+                        _micMeterHintText.Text = "✔ Đã hoàn tất thu âm khử nhiễu & điền đầy đủ câu nói vào ô văn bản!";
                         _micMeterHintText.Foreground = new SolidColorBrush(ColMatcha);
-                        _statusLogLabel.Text = "✔ Đã nhận diện giọng nói: \"" + cleanText + "\"";
+                        _statusLogLabel.Text = "✔ Đã nhận diện: \"" + finalCombined + "\"";
                     }
                     else
                     {
-                        _micMeterHintText.Text = "⚠ " + (string.IsNullOrWhiteSpace(sttErr)
-                            ? "Chưa bắt được tiếng nói rõ ràng. Hãy nói to hơn gần Micro!"
+                        _micMeterHintText.Text = "⚠ " + (string.IsNullOrWhiteSpace(sttErr) || sttErr == "silence"
+                            ? "Chưa bắt được tiếng nói rõ ràng. Hãy nói gần Micro hơn nhé!"
                             : sttErr);
                         _micMeterHintText.Foreground = new SolidColorBrush(ColYuzu);
-                        _statusLogLabel.Text = "ℹ Đã lưu file âm thanh tại 01_TaiLieu_DauVao/voice-prompt-latest.wav.";
                     }
                 });
             });

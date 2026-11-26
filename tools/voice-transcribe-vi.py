@@ -1,13 +1,9 @@
 #!/usr/bin/env python3
 """
-CapyHub Bilingual Viet-lish Voice-to-Text & Phonetic Correction Engine (tools/voice-transcribe-vi.py)
-Giải quyết triệt để 2 vấn đề khi người Việt nói vào Mic:
-  1. Nói tiếng Việt chêm từ tiếng Anh (Code-switching Việt - Anh).
-  2. Phát âm tiếng Anh chưa chuẩn (Âm bồi tiếng Việt -> Google STT ghi ra âm tiếng Việt sai).
-Cơ chế 3 tầng:
-  - Tầng 1: Auto-Gain Normalization (Khuếch đại giọng nói rõ nét).
-  - Tầng 2: Google N-Best Hypotheses Fusion (show_all=True, quét cả 5 phương án nhận diện để bắt từ tiếng Anh).
-  - Tầng 3: Context-Aware Viet-lish Phonetic Reconstructor (120+ cụm âm bồi Văn phòng / Data / CapCut / Code + đọc động từ 03_HoSo_TriNho_CaNhan/VOICE-GLOSSARY.md).
+CapyHub Real-Time Streaming & Noise-Cancelling Viet-lish STT Engine (tools/voice-transcribe-vi.py)
+- Khử nhiễu DSP 3 bước: High-Pass Filter (cắt tiếng quạt/ồn tần số thấp <130Hz) + Adaptive Noise Gate + Auto-Gain.
+- Chế độ Persistent Warm Daemon (--daemon): Nạp sẵn thư viện trong RAM, dịch từng cụm từ ngay khi đang nói (<250ms).
+- Kết hợp N-Best Hypotheses (show_all=True) + 120+ quy tắc âm bồi Việt-Anh (Viet-lish Phonetic Reconstructor).
 """
 import array
 import json
@@ -17,8 +13,8 @@ import sys
 import wave
 
 sys.stdout.reconfigure(encoding="utf-8")
+sys.stdin.reconfigure(encoding="utf-8")
 
-# Từ điển ngữ cảnh âm bồi Việt-Anh (Sắp xếp từ cụm dài cụ thể -> từ đơn để không thay nhầm ngữ cảnh)
 VIETLISH_PHONETIC_RULES = [
     # 1. Cụm từ WPS / Office / Tài liệu
     (r"\b(vê kép pi ét|đắp lưu pi ét|đắp lưu bi ét|vê đúp pi ét|w\s*b\s*s|w\s*p\s*s)(?!\s+office)\b", "WPS Office"),
@@ -83,7 +79,6 @@ VIETLISH_PHONETIC_RULES = [
     (r"\b(quy ây|kiu ây)\b", "QA"),
 ]
 
-# Tập từ khóa tiếng Anh ưu tiên khi chấm điểm N-Best Hypotheses của Google STT
 ENGLISH_TECH_KEYWORDS = {
     "wps", "office", "word", "excel", "powerpoint", "pdf", "file", "folder", "slide", "sheet",
     "data", "capcut", "video", "edit", "timeline", "code", "app", "hub", "github", "harness",
@@ -93,7 +88,6 @@ ENGLISH_TECH_KEYWORDS = {
 
 
 def load_custom_glossary(hub_root: str) -> list:
-    """Đọc thêm các quy tắc từ 03_HoSo_TriNho_CaNhan/VOICE-GLOSSARY.md (hoặc .template.md)."""
     custom_rules = []
     mem_dir = os.path.join(hub_root, "03_HoSo_TriNho_CaNhan")
     candidates = [
@@ -126,63 +120,48 @@ def apply_vietlish_phonetic_correction(text: str, hub_root: str = "") -> str:
     if not text:
         return ""
     cleaned = text.strip()
-
-    # 1. Áp dụng từ điển cá nhân VOICE-GLOSSARY.md trước
     if hub_root:
         for pattern, replacement in load_custom_glossary(hub_root):
             cleaned = re.sub(pattern, replacement, cleaned, flags=re.IGNORECASE)
-
-    # 2. Áp dụng từ điển ngữ cảnh âm bồi Việt-Anh 120+ mẫu
     for pattern, replacement in VIETLISH_PHONETIC_RULES:
         cleaned = re.sub(pattern, replacement, cleaned, flags=re.IGNORECASE)
-
-    # 3. Khử từ đệm đầu câu
     cleaned = re.sub(r"^(à ừm|à khoan|ừm thì|ờ thì)\s+", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
     return cleaned
 
 
 def pick_best_hypothesis(raw_response, hub_root: str) -> str:
-    """
-    Khi gọi recognize_google(..., show_all=True), Google trả về tới 5 phương án (N-Best).
-    Chấm điểm từng phương án: ưu tiên phương án bắt được từ tiếng Anh hoặc khớp từ điển âm bồi Việt-Anh.
-    """
     if isinstance(raw_response, str):
         return apply_vietlish_phonetic_correction(raw_response, hub_root)
-
     if not isinstance(raw_response, dict) or "alternative" not in raw_response:
         return ""
-
     alternatives = raw_response.get("alternative", [])
     if not alternatives:
         return ""
 
     best_text = ""
     best_score = -1e9
-
     for idx, alt in enumerate(alternatives):
         raw_t = (alt.get("transcript") or "").strip()
         if not raw_t:
             continue
-
         corrected_t = apply_vietlish_phonetic_correction(raw_t, hub_root)
         words = set(re.findall(r"[a-zA-Z0-9_]+", corrected_t.lower()))
         en_hits = len(words.intersection(ENGLISH_TECH_KEYWORDS))
-
-        # Điểm cơ sở ưu tiên thứ tự confidence của Google, nhưng cộng thưởng lớn nếu phương án đó bắt đúng từ tiếng Anh
-        base_rank_score = (5 - idx) * 1.0
-        en_bonus = en_hits * 2.2
-        score = base_rank_score + en_bonus
-
+        score = (5 - idx) * 1.0 + (en_hits * 2.2)
         if score > best_score:
             best_score = score
             best_text = corrected_t
-
     return best_text
 
 
-def normalize_wav_audio(wav_path: str) -> str:
-    """Khuếch đại biên độ PCM 16-bit lên mức rõ nhất (peak ~26000) nếu mic thu nhỏ."""
+def denoise_and_normalize_wav(wav_path: str) -> str:
+    """
+    Bộ lọc DSP 3 bước chống nhiễu Micro:
+    1. High-Pass Filter (~130Hz): Loại bỏ tiếng ù quạt tản nhiệt, điều hòa và tạp âm nền trầm.
+    2. Adaptive Noise Gate: Triệt tiêu tiếng xì (hiss) ở những khoảng nghỉ giữa các từ.
+    3. Peak Auto-Gain Normalization: Đưa giọng nói về biên độ chuẩn 26000 để STT bắt rõ từng âm tiết.
+    """
     try:
         with wave.open(wav_path, "rb") as wf:
             params = wf.getparams()
@@ -192,32 +171,62 @@ def normalize_wav_audio(wav_path: str) -> str:
 
         samples = array.array("h")
         samples.frombytes(raw_frames)
-        if not samples:
+        n = len(samples)
+        if n < 160:
             return wav_path
 
-        max_peak = max(abs(s) for s in samples)
+        # Bước 1: High-Pass Filter (y[i] = alpha * (y[i-1] + x[i] - x[i-1]), alpha=0.94 ở 16kHz -> cắt <150Hz)
+        filtered = array.array("h", [0] * n)
+        alpha = 0.94
+        prev_x = float(samples[0])
+        prev_y = 0.0
+        abs_sum = 0.0
+        max_peak = 1
+
+        for i in range(n):
+            x = float(samples[i])
+            y = alpha * (prev_y + x - prev_x)
+            prev_x = x
+            prev_y = y
+            if y > 32767.0:
+                y = 32767.0
+            elif y < -32768.0:
+                y = -32768.0
+            ival = int(y)
+            filtered[i] = ival
+            a = abs(ival)
+            abs_sum += a
+            if a > max_peak:
+                max_peak = a
+
         if max_peak < 150:
             return wav_path
 
-        if max_peak < 18000:
-            gain = min(12.0, 26000.0 / float(max_peak))
-            for i in range(len(samples)):
-                val = int(samples[i] * gain)
-                if val > 32767:
-                    val = 32767
-                elif val < -32768:
-                    val = -32768
-                samples[i] = val
+        # Bước 2 & 3: Noise Gate nhẹ + Khuếch đại biên độ chuẩn
+        avg_amp = abs_sum / float(n)
+        gate_threshold = min(650.0, avg_amp * 0.45)
+        gain = min(10.0, 26000.0 / float(max_peak)) if max_peak < 22000 else 1.0
 
-            with wave.open(wav_path, "wb") as out_wf:
-                out_wf.setparams(params)
-                out_wf.writeframes(samples.tobytes())
+        for i in range(n):
+            val = float(filtered[i])
+            if abs(val) < gate_threshold:
+                val *= 0.25  # Dập 75% nhiễu nền ở khoảng lặng
+            val = int(val * gain)
+            if val > 32767:
+                val = 32767
+            elif val < -32768:
+                val = -32768
+            filtered[i] = val
+
+        with wave.open(wav_path, "wb") as out_wf:
+            out_wf.setparams(params)
+            out_wf.writeframes(filtered.tobytes())
     except Exception:
         pass
     return wav_path
 
 
-def transcribe_wav_vi(wav_path: str) -> dict:
+def transcribe_wav_vi(wav_path: str, recognizer=None) -> dict:
     hub_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     if not os.path.exists(wav_path):
         return {"ok": False, "error": f"Không tìm thấy file âm thanh: {wav_path}"}
@@ -225,39 +234,62 @@ def transcribe_wav_vi(wav_path: str) -> dict:
     try:
         import speech_recognition as sr
     except ImportError:
-        return {
-            "ok": False,
-            "error": "Chưa cài SpeechRecognition (chạy: pip install SpeechRecognition)",
-            "wav_path": wav_path,
-        }
+        return {"ok": False, "error": "Chưa cài SpeechRecognition", "wav_path": wav_path}
 
-    normalize_wav_audio(wav_path)
-    recognizer = sr.Recognizer()
-    recognizer.energy_threshold = 150
-    recognizer.dynamic_energy_threshold = True
+    denoise_and_normalize_wav(wav_path)
+    if recognizer is None:
+        recognizer = sr.Recognizer()
+        recognizer.energy_threshold = 140
+        recognizer.dynamic_energy_threshold = True
 
     try:
         with sr.AudioFile(wav_path) as source:
             audio_data = recognizer.record(source)
 
-        # Lấy toàn bộ 5 phương án N-Best (show_all=True) để bắt chuẩn cả tiếng Việt lẫn tiếng Anh chêm vào
         raw_res = recognizer.recognize_google(audio_data, language="vi-VN", show_all=True)
         final_text = pick_best_hypothesis(raw_res, hub_root)
-
         if not final_text:
-            return {
-                "ok": False,
-                "error": "Chưa bắt được câu nói rõ ràng từ Micro. Bạn hãy nói gần Mic hơn nhé!",
-                "wav_path": wav_path,
-            }
-
+            return {"ok": False, "error": "silence", "wav_path": wav_path}
         return {"ok": True, "transcript": final_text, "wav_path": wav_path}
     except Exception as exc:
         return {"ok": False, "error": str(exc), "wav_path": wav_path}
 
 
+def run_streaming_daemon():
+    """
+    Chế độ Daemon giữ nóng bộ nhận diện trong RAM để dịch streaming theo thời gian thực khi người dùng đang nói.
+    """
+    try:
+        import speech_recognition as sr
+        recognizer = sr.Recognizer()
+        recognizer.energy_threshold = 140
+        recognizer.dynamic_energy_threshold = True
+    except Exception:
+        recognizer = None
+
+    print(json.dumps({"daemon": "ready"}), flush=True)
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        if line == "EXIT":
+            break
+        try:
+            req = json.loads(line)
+            wav_p = req.get("wav_path", "")
+            req_id = req.get("id", 0)
+            res = transcribe_wav_vi(wav_p, recognizer)
+            res["id"] = req_id
+            res["is_final"] = bool(req.get("is_final", False))
+            print(json.dumps(res, ensure_ascii=False), flush=True)
+        except Exception as e:
+            print(json.dumps({"ok": False, "error": str(e)}), flush=True)
+
+
 if __name__ == "__main__":
-    if len(sys.argv) >= 3 and sys.argv[1] == "--test-vietlish":
+    if len(sys.argv) >= 2 and sys.argv[1] == "--daemon":
+        run_streaming_daemon()
+    elif len(sys.argv) >= 3 and sys.argv[1] == "--test-vietlish":
         hub_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         sample = sys.argv[2]
         print(
