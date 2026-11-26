@@ -21,7 +21,7 @@ sys.stdout.reconfigure(encoding="utf-8")
 # Từ điển ngữ cảnh âm bồi Việt-Anh (Sắp xếp từ cụm dài cụ thể -> từ đơn để không thay nhầm ngữ cảnh)
 VIETLISH_PHONETIC_RULES = [
     # 1. Cụm từ WPS / Office / Tài liệu
-    (r"\b(vê kép pi ét|đắp lưu pi ét|đắp lưu bi ét|vê đúp pi ét|w\s*b\s*s|w\s*p\s*s)\b", "WPS Office"),
+    (r"\b(vê kép pi ét|đắp lưu pi ét|đắp lưu bi ét|vê đúp pi ét|w\s*b\s*s|w\s*p\s*s)(?!\s+office)\b", "WPS Office"),
     (r"\b(phai guộc|bản guộc)\b", "file Word"),
     (r"\b(phai ích seo|phai éc seo|bảng ích seo|bảng éc seo)\b", "file Excel"),
     (r"\b(ích seo|éc seo)\b", "Excel"),
@@ -43,9 +43,11 @@ VIETLISH_PHONETIC_RULES = [
     (r"\b(sấp ây gần|sắp ây gần|súp ây gần|sắp ê gần|sub ây gần|sấp ê giần|sắp agent)\b", "subagent"),
     (r"\b(ây gần|ê gần|ê giần|con ây gần)\b", "agent"),
     (r"\b(ây ai|ê ai)\b", "AI"),
-    (r"\b(con phơm|cần phơm|cơn phơm|còn phơm|xác nhận con phơm)\b", "confirm"),
-    (r"\b(pờ rôm|câu rôm|chạy rôm|viết rôm)\b", "prompt"),
-    (r"\b(tát vụ|cái tát|chia tát|nhận tát|giao tát|làm tát|xử lý tát|hoàn thành tát|các tát|đầu tát)\b", lambda m: m.group(0).replace("tát", "task")),
+    (r"\b(con phơm|cần phơm|cơn phơm|còn phơm)\b", "confirm"),
+    (r"\b(pờ rôm)\b", "prompt"),
+    (r"\b(câu rôm|chạy rôm|viết rôm)\b", lambda m: m.group(0).rsplit(" ", 1)[0] + " prompt"),
+    (r"\b(tát vụ)\b", "task"),
+    (r"\b(cái tát|chia tát|nhận tát|giao tát|làm tát|xử lý tát|hoàn thành tát|các tát|đầu tát)\b", lambda m: m.group(0).rsplit(" ", 1)[0] + " task"),
     (r"\b(sờ kiu|sờ kin|bộ sờ kiu|mắt sờ kiu|max sờ kiu)\b", "skill"),
     (r"\b(guộc phờ lâu|guốc phờ lâu)\b", "workflow"),
     (r"\b(in pút|đầu vào in pút)\b", "input"),

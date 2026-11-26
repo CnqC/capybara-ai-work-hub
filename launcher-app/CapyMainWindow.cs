@@ -584,7 +584,7 @@ namespace CapybaraHub
             StackPanel memSp = new StackPanel();
             memSp.Children.Add(new TextBlock
             {
-                Text = "🗣 Dạy Mic Từ Tiếng Anh Hay Nói Lệch",
+                Text = "🗣 Dạy Mic Từ Tiếng Anh",
                 Foreground = new SolidColorBrush(ColYuzu),
                 FontSize = 13,
                 FontWeight = FontWeights.Bold,
@@ -632,7 +632,7 @@ namespace CapybaraHub
             addWordGrid.Children.Add(targetBox);
             memSp.Children.Add(addWordGrid);
 
-            Button addGlossaryBtn = CreateFlatButton("➕ Lưu Vào Từ Điển Mic (VOICE-GLOSSARY)", ColBgPanel, ColMatcha);
+            Button addGlossaryBtn = CreateFlatButton("➕ Lưu Vào Từ Điển Mic", ColBgPanel, ColMatcha);
             addGlossaryBtn.Click += delegate
             {
                 if (CapyHubEngine.AddCustomVietlishRule(_hubRoot, spokenBox.Text, targetBox.Text))

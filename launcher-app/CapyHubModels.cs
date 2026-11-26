@@ -110,7 +110,7 @@ namespace CapybaraHub
 
         private static readonly string[][] BuiltInVietlishPairs = new string[][]
         {
-            new string[] { @"\b(vê\s*kép\s*pi\s*ét|đắp\s*lưu\s*pi\s*ét|đắp\s*lưu\s*bi\s*ét|vê\s*đúp\s*pi\s*ét|w\s*b\s*s|w\s*p\s*s)\b", "WPS Office" },
+            new string[] { @"\b(vê\s*kép\s*pi\s*ét|đắp\s*lưu\s*pi\s*ét|đắp\s*lưu\s*bi\s*ét|vê\s*đúp\s*pi\s*ét|w\s*b\s*s|w\s*p\s*s)(?!\s+office)\b", "WPS Office" },
             new string[] { @"\b(cáp\s*cắt|cắp\s*cắt|cáp\s*cất|cap\s*cut)\b", "CapCut" },
             new string[] { @"\b(sấp\s*ây\s*gần|sắp\s*ây\s*gần|súp\s*ây\s*gần|sắp\s*ê\s*gần|sub\s*ây\s*gần|sấp\s*ê\s*giần|sắp\s*agent)\b", "subagent" },
             new string[] { @"\b(ây\s*gần|ê\s*gần|ê\s*giần)\b", "agent" },
